@@ -27,7 +27,35 @@ on:
           - macos-x64
 
 jobs:
+  # -------------------------------------------------
+  # 1. Extract version once
+  # -------------------------------------------------
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.getver.outputs.version }}
+    steps:
+      - name: Checkout from Forgejo
+        run: |
+          git clone --depth 1 \
+            https://x-access-token:${{ secrets.FORGEJO_TOKEN }}@git.hanumaninstitute.com/hanuman/HanumanInstituteApps.git .
+
+      - name: Get version
+        id: getver
+        run: |
+          VERSION=$(grep -oP '(?<=<AssemblyVersion>)[^<]+' Src/Directory.Build.props | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "Could not find AssemblyVersion"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+
+  # -------------------------------------------------
+  # 2. Matrix build
+  # -------------------------------------------------
   publish:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -61,8 +89,11 @@ jobs:
         if: steps.should-run.outputs.run != 'true'
         run: echo "Skipping ${{ matrix.app }} / ${{ matrix.platform }}"
 
-      - uses: actions/checkout@v4
+      - name: Checkout from Forgejo
         if: steps.should-run.outputs.run == 'true'
+        run: |
+          git clone --depth 1 \
+            https://x-access-token:${{ secrets.FORGEJO_TOKEN }}@git.hanumaninstitute.com/hanuman/HanumanInstituteApps.git .
 
       - uses: actions/setup-dotnet@v4
         if: steps.should-run.outputs.run == 'true'
@@ -93,3 +124,30 @@ jobs:
         with:
           name: ${{ matrix.app }}-${{ matrix.platform }}
           path: Publish/**
+          if-no-files-found: ignore
+
+  # -------------------------------------------------
+  # 3. Create Draft Release with version tag
+  # -------------------------------------------------
+  release:
+    needs: [prepare, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Draft Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.prepare.outputs.version }}
+          name: v${{ needs.prepare.outputs.version }}
+          draft: true
+          files: artifacts/**/*
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
