@@ -76,13 +76,3 @@ Here's a sample video <a href="https://www.spiritualselftransformation.com/files
 [How to Rip and Optimize VCDs](https://github.com/mysteryx93/NaturalGroundingPlayer/wiki/How-to-Rip-VCDs)
 
 [How to Rip and Optimize DVDs](https://github.com/mysteryx93/NaturalGroundingPlayer/wiki/How-to-Rip-DVDs)
-
-## License
-
-Hanuman Institute Apps is an Open Source project distributed under the <a href="https://github.com/mysteryx93/NaturalGroundingPlayer/blob/master/LICENSE.md">MIT license</a>.
-
-The Natural Grounding Player is built with C#/.NET and Avalonia UI.
-
-## About the author
-
-Brought to you by [Etienne Charland aka Hanuman](https://www.spiritualselftransformation.com/). Made by a Lightworker in his spare time.
