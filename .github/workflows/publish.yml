@@ -1,0 +1,95 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: Application
+        type: choice
+        required: true
+        options:
+          - All
+          - Player432Hz
+          - Converter432Hz
+          - PowerliminalsPlayer
+          - YangDownloader
+
+      platform:
+        description: Platform
+        type: choice
+        required: true
+        options:
+          - All
+          - win-x64
+          - win-x86
+          - linux-x64
+          - linux-arm64
+          - macos-x64
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        app:
+          - Player432Hz
+          - Converter432Hz
+          - PowerliminalsPlayer
+          - YangDownloader
+        platform:
+          - win-x64
+          - win-x86
+          - linux-x64
+          - linux-arm64
+          - macos-x64
+
+    runs-on: ${{ startsWith(matrix.platform, 'win') && 'windows-latest' || startsWith(matrix.platform, 'linux') && 'ubuntu-latest' || 'macos-latest' }}
+
+    steps:
+      - name: Check if this combination should run
+        id: should-run
+        run: |
+          if [[ "${{ inputs.app }}" == "All" || "${{ inputs.app }}" == "${{ matrix.app }}" ]] && \
+             [[ "${{ inputs.platform }}" == "All" || "${{ inputs.platform }}" == "${{ matrix.platform }}" ]]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Skip
+        if: steps.should-run.outputs.run != 'true'
+        run: echo "Skipping ${{ matrix.app }} / ${{ matrix.platform }}"
+
+      - uses: actions/checkout@v4
+        if: steps.should-run.outputs.run == 'true'
+
+      - uses: actions/setup-dotnet@v4
+        if: steps.should-run.outputs.run == 'true'
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install PupNet
+        if: steps.should-run.outputs.run == 'true' && startsWith(matrix.platform, 'linux-')
+        run: |
+          dotnet tool install -g PupNet
+          echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+
+      - name: Publish
+        if: steps.should-run.outputs.run == 'true'
+        env:
+          SCRIPT: ${{ startsWith(matrix.platform, 'win') && 'publish-win' || startsWith(matrix.platform, 'linux') && 'publish-linux' || 'publish-macos' }}
+          RID: ${{ matrix.platform == 'macos-x64' && 'osx-x64' || matrix.platform }}
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cmd /c "Scripts\%SCRIPT%.bat ${{ matrix.app }} %RID%"
+          else
+            chmod +x "Scripts/$SCRIPT"
+            ./"Scripts/$SCRIPT" "${{ matrix.app }}" "$RID"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: steps.should-run.outputs.run == 'true'
+        with:
+          name: ${{ matrix.app }}-${{ matrix.platform }}
+          path: Publish/**
