@@ -27,18 +27,18 @@ on:
           - macos-x64
 
 jobs:
-  # -------------------------------------------------
-  # 1. Extract version once
-  # -------------------------------------------------
   prepare:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.getver.outputs.version }}
     steps:
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.FORGEJO_SSH_KEY }}
+
       - name: Checkout from Forgejo
-        run: |
-          git clone --depth 1 \
-            https://x-access-token:${{ secrets.FORGEJO_TOKEN }}@git.hanumaninstitute.com/hanuman/HanumanInstituteApps.git .
+        run: git clone --depth 1 git@git.hanumaninstitute.com:hanuman/HanumanInstituteApps.git .
 
       - name: Get version
         id: getver
@@ -51,9 +51,6 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
 
-  # -------------------------------------------------
-  # 2. Matrix build
-  # -------------------------------------------------
   publish:
     needs: prepare
     strategy:
@@ -74,8 +71,8 @@ jobs:
     runs-on: ${{ startsWith(matrix.platform, 'win') && 'windows-latest' || startsWith(matrix.platform, 'linux') && 'ubuntu-latest' || 'macos-latest' }}
 
     steps:
-      - name: Check if this combination should run
-        id: should-run
+      - name: Decide whether to run
+        id: decide
         run: |
           if [[ "${{ inputs.app }}" == "All" || "${{ inputs.app }}" == "${{ matrix.app }}" ]] && \
              [[ "${{ inputs.platform }}" == "All" || "${{ inputs.platform }}" == "${{ matrix.platform }}" ]]; then
@@ -85,29 +82,29 @@ jobs:
           fi
         shell: bash
 
-      - name: Skip
-        if: steps.should-run.outputs.run != 'true'
-        run: echo "Skipping ${{ matrix.app }} / ${{ matrix.platform }}"
+      - name: Setup SSH
+        if: steps.decide.outputs.run == 'true'
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.FORGEJO_SSH_KEY }}
 
       - name: Checkout from Forgejo
-        if: steps.should-run.outputs.run == 'true'
-        run: |
-          git clone --depth 1 \
-            https://x-access-token:${{ secrets.FORGEJO_TOKEN }}@git.hanumaninstitute.com/hanuman/HanumanInstituteApps.git .
+        if: steps.decide.outputs.run == 'true'
+        run: git clone --depth 1 git@git.hanumaninstitute.com:hanuman/HanumanInstituteApps.git .
 
       - uses: actions/setup-dotnet@v4
-        if: steps.should-run.outputs.run == 'true'
+        if: steps.decide.outputs.run == 'true'
         with:
           dotnet-version: 10.0.x
 
       - name: Install PupNet
-        if: steps.should-run.outputs.run == 'true' && startsWith(matrix.platform, 'linux-')
+        if: steps.decide.outputs.run == 'true' && startsWith(matrix.platform, 'linux-')
         run: |
           dotnet tool install -g PupNet
           echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
 
       - name: Publish
-        if: steps.should-run.outputs.run == 'true'
+        if: steps.decide.outputs.run == 'true'
         env:
           SCRIPT: ${{ startsWith(matrix.platform, 'win') && 'publish-win' || startsWith(matrix.platform, 'linux') && 'publish-linux' || 'publish-macos' }}
           RID: ${{ matrix.platform == 'macos-x64' && 'osx-x64' || matrix.platform }}
@@ -120,21 +117,17 @@ jobs:
           fi
 
       - uses: actions/upload-artifact@v4
-        if: steps.should-run.outputs.run == 'true'
+        if: steps.decide.outputs.run == 'true'
         with:
           name: ${{ matrix.app }}-${{ matrix.platform }}
           path: Publish/**
           if-no-files-found: ignore
 
-  # -------------------------------------------------
-  # 3. Create Draft Release with version tag
-  # -------------------------------------------------
   release:
     needs: [prepare, publish]
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
