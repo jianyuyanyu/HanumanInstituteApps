@@ -35,8 +35,9 @@ concurrency:
 
 env:
   DOTNET_VERSION: 10.0.x
-  FORGEJO_REPOSITORY: git@git.hanumaninstitute.com:hanuman/HanumanInstituteApps.git
+  FORGEJO_REPOSITORY: git@forgejo.hanumaninstitute.com:hanuman/HanumanInstituteApps.git
   SOURCE_DIR: ${{ github.workspace }}/source
+  PUBLISH_OUT: ${{ github.workspace }}/artifacts
 
 jobs:
   prepare:
@@ -60,27 +61,50 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
+          [[ -n "$FORGEJO_SSH_KEY" ]] || {
+            echo "::error::FORGEJO_SSH_KEY is empty or unavailable."
+            exit 1
+          }
 
-          printf '%s\n' "$FORGEJO_SSH_KEY" > ~/.ssh/forgejo_key
-          chmod 600 ~/.ssh/forgejo_key
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
 
-          ssh-keyscan -H git.hanumaninstitute.com >> ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
+          printf '%s\n' "$FORGEJO_SSH_KEY" > "$HOME/.ssh/forgejo_deploy_key"
+          chmod 600 "$HOME/.ssh/forgejo_deploy_key"
 
-      - name: Checkout Forgejo source
+          ssh-keyscan -H git.hanumaninstitute.com >> "$HOME/.ssh/known_hosts"
+          chmod 644 "$HOME/.ssh/known_hosts"
+
+          cat > "$HOME/.ssh/config" <<EOF
+          Host forgejo.hanumaninstitute.com
+            HostName git.hanumaninstitute.com
+            User git
+            IdentityFile $HOME/.ssh/forgejo_deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+          EOF
+
+          chmod 600 "$HOME/.ssh/config"
+
+      - name: Test Forgejo repository access
         shell: bash
-        env:
-          SOURCE_DIR: ${{ env.SOURCE_DIR }}
         run: |
           set -euo pipefail
 
-          GIT_SSH_COMMAND='ssh -i ~/.ssh/forgejo_key -o IdentitiesOnly=yes' \
-            git clone \
-              --depth 1 \
-              "$FORGEJO_REPOSITORY" \
-              "$SOURCE_DIR"
+          git ls-remote \
+            "$FORGEJO_REPOSITORY"
+
+      - name: Checkout Forgejo source
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf "$SOURCE_DIR"
+
+          git clone \
+            --depth 1 \
+            "$FORGEJO_REPOSITORY" \
+            "$SOURCE_DIR"
 
       - name: Resolve release metadata
         id: meta
@@ -88,44 +112,26 @@ jobs:
         env:
           REQUESTED_APP: ${{ inputs.app }}
           REQUESTED_PLATFORM: ${{ inputs.platform }}
-          SOURCE_DIR: ${{ env.SOURCE_DIR }}
         run: |
           set -euo pipefail
 
-          readonly APPS=(
-            Player432Hz
-            Converter432Hz
-            PowerliminalsPlayer
-            YangDownloader
-          )
+          apps='["Player432Hz","Converter432Hz","PowerliminalsPlayer","YangDownloader"]'
+          platforms='["win-x64","win-x86","linux-x64","linux-arm64","macos-x64","macos-arm64"]'
 
-          readonly PLATFORMS=(
-            win-x64
-            win-x86
-            linux-x64
-            linux-arm64
-            macos-x64
-            macos-arm64
-          )
-
-          if [[ "$REQUESTED_APP" == "All" ]]; then
-            apps=("${APPS[@]}")
-          else
-            apps=("$REQUESTED_APP")
+          if [[ "$REQUESTED_APP" != "All" ]]; then
+            apps=$(jq -cn --arg a "$REQUESTED_APP" '[$a]')
           fi
 
-          if [[ "$REQUESTED_PLATFORM" == "All" ]]; then
-            platforms=("${PLATFORMS[@]}")
-          else
-            platforms=("$REQUESTED_PLATFORM")
+          if [[ "$REQUESTED_PLATFORM" != "All" ]]; then
+            platforms=$(jq -cn --arg p "$REQUESTED_PLATFORM" '[$p]')
           fi
 
           props="$SOURCE_DIR/Src/Directory.Build.props"
 
-          if [[ ! -f "$props" ]]; then
+          [[ -f "$props" ]] || {
             echo "::error::Missing $props"
             exit 1
-          fi
+          }
 
           version=$(
             sed -n \
@@ -134,32 +140,15 @@ jobs:
             head -n 1
           )
 
-          if [[ -z "$version" ]]; then
-            echo "::error::AssemblyVersion was not found in $props"
+          [[ -n "$version" ]] || {
+            echo "::error::AssemblyVersion not found in $props"
             exit 1
-          fi
-
-          if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
-            echo "::error::Invalid AssemblyVersion: $version"
-            exit 1
-          fi
-
-          app_json=$(
-            printf '%s\n' "${apps[@]}" |
-            jq -R . |
-            jq -sc .
-          )
-
-          platform_json=$(
-            printf '%s\n' "${platforms[@]}" |
-            jq -R . |
-            jq -sc .
-          )
+          }
 
           matrix=$(
             jq -cn \
-              --argjson apps "$app_json" \
-              --argjson platforms "$platform_json" '
+              --argjson apps "$apps" \
+              --argjson platforms "$platforms" '
               {
                 include: [
                   $apps[] as $app |
@@ -167,7 +156,6 @@ jobs:
                   {
                     app: $app,
                     platform: $platform,
-
                     runner:
                       (
                         if ($platform | startswith("win-"))
@@ -177,7 +165,6 @@ jobs:
                         else "macos-latest"
                         end
                       ),
-
                     runtime:
                       (
                         if $platform == "macos-x64"
@@ -195,10 +182,6 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
-          echo "Version: $version"
-          echo "Applications: ${apps[*]}"
-          echo "Platforms: ${platforms[*]}"
-
   publish:
     needs: prepare
 
@@ -211,10 +194,6 @@ jobs:
     permissions:
       contents: read
 
-    env:
-      PUBLISH_OUT: ${{ github.workspace }}/artifacts
-      SOURCE_DIR: ${{ github.workspace }}/source
-
     steps:
       - name: Checkout workflow repository
         uses: actions/checkout@v4
@@ -226,27 +205,48 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
+          [[ -n "$FORGEJO_SSH_KEY" ]] || {
+            echo "::error::FORGEJO_SSH_KEY is empty or unavailable."
+            exit 1
+          }
 
-          printf '%s\n' "$FORGEJO_SSH_KEY" > ~/.ssh/forgejo_key
-          chmod 600 ~/.ssh/forgejo_key
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
 
-          ssh-keyscan -H git.hanumaninstitute.com >> ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
+          printf '%s\n' "$FORGEJO_SSH_KEY" > "$HOME/.ssh/forgejo_deploy_key"
+          chmod 600 "$HOME/.ssh/forgejo_deploy_key"
+
+          ssh-keyscan -H git.hanumaninstitute.com >> "$HOME/.ssh/known_hosts"
+          chmod 644 "$HOME/.ssh/known_hosts"
+
+          cat > "$HOME/.ssh/config" <<EOF
+          Host forgejo.hanumaninstitute.com
+            HostName git.hanumaninstitute.com
+            User git
+            IdentityFile $HOME/.ssh/forgejo_deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+          EOF
+
+          chmod 600 "$HOME/.ssh/config"
+
+      - name: Test Forgejo repository access
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-remote "$FORGEJO_REPOSITORY"
 
       - name: Checkout Forgejo source
         shell: bash
-        env:
-          SOURCE_DIR: ${{ env.SOURCE_DIR }}
         run: |
           set -euo pipefail
 
-          GIT_SSH_COMMAND='ssh -i ~/.ssh/forgejo_key -o IdentitiesOnly=yes' \
-            git clone \
-              --depth 1 \
-              "$FORGEJO_REPOSITORY" \
-              "$SOURCE_DIR"
+          rm -rf "$SOURCE_DIR"
+
+          git clone \
+            --depth 1 \
+            "$FORGEJO_REPOSITORY" \
+            "$SOURCE_DIR"
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -287,12 +287,11 @@ jobs:
         shell: bash
         env:
           APP: ${{ matrix.app }}
-          PLATFORM: ${{ matrix.platform }}
           RUNTIME: ${{ matrix.runtime }}
         run: |
           set -euo pipefail
 
-          case "$PLATFORM" in
+          case "${{ matrix.platform }}" in
             win-x64|win-x86)
               Publish/workflows/publish-win "$APP" "$RUNTIME"
               ;;
@@ -306,7 +305,7 @@ jobs:
               ;;
 
             *)
-              echo "::error::Unsupported platform: $PLATFORM"
+              echo "::error::Unsupported platform: ${{ matrix.platform }}"
               exit 1
               ;;
           esac
@@ -326,8 +325,6 @@ jobs:
           fi
 
           [[ -s "${files[0]}" ]]
-
-          echo "Artifact: ${files[0]}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -353,21 +350,6 @@ jobs:
           pattern: '*-*'
           path: artifacts
           merge-multiple: true
-
-      - name: Verify release artifacts
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          shopt -s nullglob
-          files=(artifacts/*)
-
-          if (( ${#files[@]} == 0 )); then
-            echo "::error::No release artifacts were downloaded"
-            exit 1
-          fi
-
-          printf 'Release artifact: %s\n' "${files[@]}"
 
       - name: Create draft release
         uses: softprops/action-gh-release@v2
