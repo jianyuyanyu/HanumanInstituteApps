@@ -14,6 +14,7 @@ on:
           - Converter432Hz
           - PowerliminalsPlayer
           - YangDownloader
+
       platform:
         description: Platform
         type: choice
@@ -26,106 +27,279 @@ on:
           - linux-x64
           - linux-arm64
           - macos-x64
+          - macos-arm64
+
+concurrency:
+  group: publish-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_VERSION: 10.0.x
 
 jobs:
   prepare:
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
     outputs:
       version: ${{ steps.meta.outputs.version }}
       matrix: ${{ steps.meta.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Resolve version and matrix
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve release metadata
         id: meta
+        shell: bash
         env:
-          APP: ${{ inputs.app }}
-          PLATFORM: ${{ inputs.platform }}
+          REQUESTED_APP: ${{ inputs.app }}
+          REQUESTED_PLATFORM: ${{ inputs.platform }}
         run: |
           set -euo pipefail
-          version=$(sed -n 's/.*<AssemblyVersion>\([^<]*\)<\/AssemblyVersion>.*/\1/p' Src/Directory.Build.props | head -n 1)
-          if [ -z "$version" ]; then
-            echo "Could not find AssemblyVersion"
+
+          readonly APPS=(
+            Player432Hz
+            Converter432Hz
+            PowerliminalsPlayer
+            YangDownloader
+          )
+
+          readonly PLATFORMS=(
+            win-x64
+            win-x86
+            linux-x64
+            linux-arm64
+            macos-x64
+            macos-arm64
+          )
+
+          if [[ "$REQUESTED_APP" == "All" ]]; then
+            apps=("${APPS[@]}")
+          else
+            apps=("$REQUESTED_APP")
+          fi
+
+          if [[ "$REQUESTED_PLATFORM" == "All" ]]; then
+            platforms=("${PLATFORMS[@]}")
+          else
+            platforms=("$REQUESTED_PLATFORM")
+          fi
+
+          version=$(
+            sed -n \
+              's/.*<AssemblyVersion>\([^<]*\)<\/AssemblyVersion>.*/\1/p' \
+              Src/Directory.Build.props |
+            head -n 1
+          )
+
+          if [[ -z "$version" ]]; then
+            echo "::error::AssemblyVersion was not found in Src/Directory.Build.props"
             exit 1
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Detected version: $version"
 
-          apps='["Player432Hz","Converter432Hz","PowerliminalsPlayer","YangDownloader"]'
-          platforms='["win-x64","win-x86","linux-x64","linux-arm64","macos-x64"]'
-          if [ "$APP" != All ]; then
-            apps=$(jq -cn --arg a "$APP" '[$a]')
+          if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+            echo "::error::Invalid AssemblyVersion: $version"
+            exit 1
           fi
-          if [ "$PLATFORM" != All ]; then
-            platforms=$(jq -cn --arg p "$PLATFORM" '[$p]')
-          fi
-          matrix=$(jq -cn --argjson app "$apps" --argjson platform "$platforms" '{app:$app,platform:$platform}')
+
+          app_json=$(
+            printf '%s\n' "${apps[@]}" |
+            jq -R . |
+            jq -sc .
+          )
+
+          platform_json=$(
+            printf '%s\n' "${platforms[@]}" |
+            jq -R . |
+            jq -sc .
+          )
+
+          matrix=$(
+            jq -cn \
+              --argjson apps "$app_json" \
+              --argjson platforms "$platform_json" '
+              {
+                include: [
+                  $apps[] as $app |
+                  $platforms[] as $platform |
+                  {
+                    app: $app,
+                    platform: $platform,
+
+                    runner:
+                      (
+                        if ($platform | startswith("win-"))
+                        then "windows-latest"
+                        elif ($platform | startswith("linux-"))
+                        then "ubuntu-latest"
+                        else "macos-latest"
+                        end
+                      ),
+
+                    runtime:
+                      (
+                        if $platform == "macos-x64"
+                        then "osx-x64"
+                        elif $platform == "macos-arm64"
+                        then "osx-arm64"
+                        else $platform
+                        end
+                      )
+                  }
+                ]
+              }'
+          )
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+          echo "Version: $version"
+          echo "Applications: ${apps[*]}"
+          echo "Platforms: ${platforms[*]}"
 
   publish:
     needs: prepare
+
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
-    runs-on: ${{ startsWith(matrix.platform, 'win') && 'windows-latest' || startsWith(matrix.platform, 'linux') && 'ubuntu-latest' || 'macos-latest' }}
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+
+    runs-on: ${{ matrix.runner }}
+
+    permissions:
+      contents: read
+
     env:
       PUBLISH_OUT: ${{ github.workspace }}/artifacts
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-dotnet@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Install PupNet
-        if: startsWith(matrix.platform, 'linux')
+      - name: Install Inno Setup
+        if: startsWith(matrix.platform, 'win-')
+        shell: pwsh
         run: |
-          dotnet tool install -g kuiperzone.pupnet
+          choco install innosetup --yes --no-progress
+
+      - name: Install Linux packaging tools
+        if: startsWith(matrix.platform, 'linux-')
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          dotnet tool install --global kuiperzone.pupnet
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
 
-      - name: Install appimagetool
-        if: startsWith(matrix.platform, 'linux')
-        run: |
           mkdir -p "$HOME/.local/bin"
-          curl -fsSL -o "$HOME/.local/bin/appimagetool" \
-            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --output "$HOME/.local/bin/appimagetool" \
+            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+
           chmod +x "$HOME/.local/bin/appimagetool"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
           echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
 
       - name: Publish
         shell: bash
         env:
-          RID: ${{ matrix.platform == 'macos-x64' && 'osx-x64' || matrix.platform }}
+          APP: ${{ matrix.app }}
+          PLATFORM: ${{ matrix.platform }}
+          RUNTIME: ${{ matrix.runtime }}
         run: |
           set -euo pipefail
-          if [[ "${{ matrix.platform }}" == win-* ]]; then
-            script=publish-win
-          elif [[ "${{ matrix.platform }}" == linux-* ]]; then
-            script=publish-linux
-          else
-            script=publish-osx
-          fi
-          chmod +x Publish/workflows/publish-linux Publish/workflows/publish-osx Publish/workflows/publish-win
-          "./Publish/workflows/$script" "${{ matrix.app }}" "$RID"
 
-      - uses: actions/upload-artifact@v4
+          case "$PLATFORM" in
+            win-x64|win-x86)
+              Publish/workflows/publish-win "$APP" "$RUNTIME"
+              ;;
+
+            linux-x64|linux-arm64)
+              Publish/workflows/publish-linux "$APP" "$RUNTIME"
+              ;;
+
+            macos-x64|macos-arm64)
+              Publish/workflows/publish-osx "$APP" "$RUNTIME"
+              ;;
+
+            *)
+              echo "::error::Unsupported platform: $PLATFORM"
+              exit 1
+              ;;
+          esac
+
+      - name: Verify artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          files=(artifacts/*)
+
+          if (( ${#files[@]} != 1 )); then
+            echo "::error::Expected exactly one artifact, found ${#files[@]}"
+            printf '%s\n' "${files[@]}"
+            exit 1
+          fi
+
+          [[ -s "${files[0]}" ]]
+
+          echo "Artifact: ${files[0]}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.app }}-${{ matrix.platform }}
           path: artifacts/*
           if-no-files-found: error
 
   release:
-    needs: [prepare, publish]
+    needs:
+      - prepare
+      - publish
+
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
+
     steps:
-      - name: Download artifacts
+      - name: Download published artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: '*-*'
           path: artifacts
           merge-multiple: true
+
+      - name: Verify release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          files=(artifacts/*)
+
+          if (( ${#files[@]} == 0 )); then
+            echo "::error::No release artifacts were downloaded"
+            exit 1
+          fi
+
+          echo "Release artifacts:"
+          printf '  %s\n' "${files[@]}"
 
       - name: Create draft release
         uses: softprops/action-gh-release@v2
