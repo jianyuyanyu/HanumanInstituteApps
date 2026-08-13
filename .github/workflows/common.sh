@@ -6,19 +6,21 @@ _workflows_dir=$(
   pwd
 )
 
-publish_dir=$(
-  cd -- "$_workflows_dir/.." &&
+# Publish/workflows -> GitHub repository root.
+workflow_repo_root=$(
+  cd -- "$_workflows_dir/../.." &&
   pwd
 )
 
-repo_root=$(
-  cd -- "$publish_dir/.." &&
-  pwd
-)
+# Forgejo source checkout.
+repo_root="${SOURCE_DIR:?SOURCE_DIR must point to the Forgejo source checkout}"
+
+publish_dir="$_workflows_dir"
 
 readonly _workflows_dir
-readonly publish_dir
+readonly workflow_repo_root
 readonly repo_root
+readonly publish_dir
 
 readonly -a SUPPORTED_APPS=(
   Player432Hz
@@ -110,7 +112,7 @@ read_category() {
 output_dir() {
   local version=$1
 
-  printf '%s\n' "${PUBLISH_OUT:-$publish_dir/$version}"
+  printf '%s\n' "${PUBLISH_OUT:-$workflow_repo_root/$version}"
 }
 
 replace_tokens() {
