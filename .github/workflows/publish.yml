@@ -75,24 +75,29 @@ jobs:
           mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
 
-          ssh-keyscan -H git.hanumaninstitute.com >> "$HOME/.ssh/known_hosts"
+          printf '%s\n' "$FORGEJO_SSH_KEY" > "$HOME/.ssh/forgejo_deploy_key"
+          chmod 600 "$HOME/.ssh/forgejo_deploy_key"
+
+          ssh-keyscan -H git.hanumaninstitute.com \
+            >> "$HOME/.ssh/known_hosts"
+
           chmod 644 "$HOME/.ssh/known_hosts"
 
           eval "$(ssh-agent -s)"
-
-          printf '%s\n' "$FORGEJO_SSH_KEY" | ssh-add -
+          ssh-add "$HOME/.ssh/forgejo_deploy_key"
 
           cat > "$HOME/.ssh/config" <<EOF
           Host git.hanumaninstitute.com
             HostName git.hanumaninstitute.com
             User git
-            IdentitiesOnly no
+            IdentityFile $HOME/.ssh/forgejo_deploy_key
+            IdentitiesOnly yes
             StrictHostKeyChecking yes
           EOF
 
           chmod 600 "$HOME/.ssh/config"
 
-          echo "SSH keys loaded:"
+          echo "Loaded SSH keys:"
           ssh-add -l
 
       - name: Test Forgejo repository access
@@ -100,21 +105,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          GIT_SSH_COMMAND="ssh -vvv" \
-            git ls-remote \
-              git@git.hanumaninstitute.com:hanuman/HanumanInstituteApps.git
-
-      - name: Checkout Forgejo source
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          rm -rf "$SOURCE_DIR"
-
-          git clone \
-            --depth 1 \
-            git@git.hanumaninstitute.com:hanuman/HanumanInstituteApps.git \
-            "$SOURCE_DIR"
+          git ls-remote \
+            "$FORGEJO_REPOSITORY"
 
       - name: Checkout Forgejo source
         shell: bash
@@ -150,10 +142,10 @@ jobs:
 
           props="$SOURCE_DIR/Src/Directory.Build.props"
 
-          [[ -f "$props" ]] || {
+          if [[ ! -f "$props" ]]; then
             echo "::error::Missing $props"
             exit 1
-          }
+          fi
 
           version=$(
             sed -n \
@@ -162,10 +154,10 @@ jobs:
             head -n 1
           )
 
-          [[ -n "$version" ]] || {
+          if [[ -z "$version" ]]; then
             echo "::error::AssemblyVersion not found in $props"
             exit 1
-          }
+          fi
 
           matrix=$(
             jq -cn \
@@ -204,6 +196,9 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
+          echo "Version: $version"
+          echo "Matrix: $matrix"
+
   publish:
     needs: prepare
 
@@ -227,10 +222,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          [[ -n "$FORGEJO_SSH_KEY" ]] || {
-            echo "::error::FORGEJO_SSH_KEY is empty or unavailable."
+          if [[ -z "$FORGEJO_SSH_KEY" ]]; then
+            echo "::error::FORGEJO_SSH_KEY is empty."
             exit 1
-          }
+          fi
 
           mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
@@ -238,11 +233,16 @@ jobs:
           printf '%s\n' "$FORGEJO_SSH_KEY" > "$HOME/.ssh/forgejo_deploy_key"
           chmod 600 "$HOME/.ssh/forgejo_deploy_key"
 
-          ssh-keyscan -H git.hanumaninstitute.com >> "$HOME/.ssh/known_hosts"
+          ssh-keyscan -H git.hanumaninstitute.com \
+            >> "$HOME/.ssh/known_hosts"
+
           chmod 644 "$HOME/.ssh/known_hosts"
 
+          eval "$(ssh-agent -s)"
+          ssh-add "$HOME/.ssh/forgejo_deploy_key"
+
           cat > "$HOME/.ssh/config" <<EOF
-          Host forgejo.hanumaninstitute.com
+          Host git.hanumaninstitute.com
             HostName git.hanumaninstitute.com
             User git
             IdentityFile $HOME/.ssh/forgejo_deploy_key
@@ -252,11 +252,16 @@ jobs:
 
           chmod 600 "$HOME/.ssh/config"
 
+          echo "Loaded SSH keys:"
+          ssh-add -l
+
       - name: Test Forgejo repository access
         shell: bash
         run: |
           set -euo pipefail
-          git ls-remote "$FORGEJO_REPOSITORY"
+
+          git ls-remote \
+            "$FORGEJO_REPOSITORY"
 
       - name: Checkout Forgejo source
         shell: bash
@@ -288,6 +293,7 @@ jobs:
           set -euo pipefail
 
           dotnet tool install --global kuiperzone.pupnet
+
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
 
           mkdir -p "$HOME/.local/bin"
@@ -301,8 +307,8 @@ jobs:
             "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
 
           chmod +x "$HOME/.local/bin/appimagetool"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
 
       - name: Publish
@@ -346,7 +352,13 @@ jobs:
             exit 1
           fi
 
-          [[ -s "${files[0]}" ]]
+          if [[ ! -s "${files[0]}" ]]; then
+            echo "::error::Artifact is empty: ${files[0]}"
+            exit 1
+          fi
+
+          echo "Artifact:"
+          ls -lh "${files[0]}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -357,6 +369,7 @@ jobs:
 
   release:
     if: inputs.publish_release
+
     needs:
       - prepare
       - publish
