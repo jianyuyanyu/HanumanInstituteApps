@@ -39,13 +39,14 @@ outPath="$outDir/$outFile"
 template="$publish_dir/installer.iss"
 issFile="$RUNNER_TEMP/${app}-${runtime}.iss"
 
-echo "Runtime      = $runtime"
-echo "AppName      = $app"
-echo "Version      = $version"
-echo "Project      = $proj"
-echo "PublishPath  = $publishPath"
-echo "Template     = $template"
-echo "Output       = $outPath"
+echo "Runtime     = $runtime"
+echo "AppName     = $app"
+echo "Version     = $version"
+echo "Source      = $repo_root"
+echo "Project     = $proj"
+echo "PublishPath = $publishPath"
+echo "Template    = $template"
+echo "Output      = $outPath"
 echo
 
 [[ -f "$template" ]] || {
@@ -103,10 +104,6 @@ replace_tokens \
   "__OUTPUT_DIR__" "$outDir" \
   "__OUTPUT_FILE__" "$outFile"
 
-echo "Compiling Inno Setup installer:"
-echo "  $issFile"
-echo
-
 "$iscc" "$issFile"
 
 [[ -s "$outPath" ]] || {
@@ -114,5 +111,4 @@ echo
   exit 1
 }
 
-echo
 echo "Created: $outPath"
