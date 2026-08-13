@@ -68,7 +68,7 @@ jobs:
           set -euo pipefail
 
           if [[ -z "$FORGEJO_SSH_KEY" ]]; then
-            echo "::error::FORGEJO_SSH_KEY is empty."
+            echo "::error::FORGEJO_SSH_KEY is empty or unavailable."
             exit 1
           fi
 
@@ -83,30 +83,31 @@ jobs:
 
           chmod 644 "$HOME/.ssh/known_hosts"
 
-          eval "$(ssh-agent -s)"
-          ssh-add "$HOME/.ssh/forgejo_deploy_key"
+          echo "Forgejo key fingerprint:"
+          ssh-keygen -lf "$HOME/.ssh/forgejo_deploy_key"
 
-          cat > "$HOME/.ssh/config" <<EOF
-          Host git.hanumaninstitute.com
-            HostName git.hanumaninstitute.com
-            User git
-            IdentityFile $HOME/.ssh/forgejo_deploy_key
-            IdentitiesOnly yes
-            StrictHostKeyChecking yes
-          EOF
+      - name: Test Forgejo SSH authentication
+        shell: bash
+        run: |
+          set -euo pipefail
 
-          chmod 600 "$HOME/.ssh/config"
-
-          echo "Loaded SSH keys:"
-          ssh-add -l
+          ssh \
+            -i "$HOME/.ssh/forgejo_deploy_key" \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -T \
+            git@git.hanumaninstitute.com || true
 
       - name: Test Forgejo repository access
         shell: bash
         run: |
           set -euo pipefail
 
-          git ls-remote \
-            "$FORGEJO_REPOSITORY"
+          GIT_SSH_COMMAND="ssh \
+            -i $HOME/.ssh/forgejo_deploy_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes" \
+          git ls-remote "$FORGEJO_REPOSITORY"
 
       - name: Checkout Forgejo source
         shell: bash
@@ -115,6 +116,10 @@ jobs:
 
           rm -rf "$SOURCE_DIR"
 
+          GIT_SSH_COMMAND="ssh \
+            -i $HOME/.ssh/forgejo_deploy_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes" \
           git clone \
             --depth 1 \
             "$FORGEJO_REPOSITORY" \
@@ -196,9 +201,6 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
-          echo "Version: $version"
-          echo "Matrix: $matrix"
-
   publish:
     needs: prepare
 
@@ -223,7 +225,7 @@ jobs:
           set -euo pipefail
 
           if [[ -z "$FORGEJO_SSH_KEY" ]]; then
-            echo "::error::FORGEJO_SSH_KEY is empty."
+            echo "::error::FORGEJO_SSH_KEY is empty or unavailable."
             exit 1
           fi
 
@@ -238,30 +240,8 @@ jobs:
 
           chmod 644 "$HOME/.ssh/known_hosts"
 
-          eval "$(ssh-agent -s)"
-          ssh-add "$HOME/.ssh/forgejo_deploy_key"
-
-          cat > "$HOME/.ssh/config" <<EOF
-          Host git.hanumaninstitute.com
-            HostName git.hanumaninstitute.com
-            User git
-            IdentityFile $HOME/.ssh/forgejo_deploy_key
-            IdentitiesOnly yes
-            StrictHostKeyChecking yes
-          EOF
-
-          chmod 600 "$HOME/.ssh/config"
-
-          echo "Loaded SSH keys:"
-          ssh-add -l
-
-      - name: Test Forgejo repository access
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          git ls-remote \
-            "$FORGEJO_REPOSITORY"
+          echo "Forgejo key fingerprint:"
+          ssh-keygen -lf "$HOME/.ssh/forgejo_deploy_key"
 
       - name: Checkout Forgejo source
         shell: bash
@@ -270,6 +250,10 @@ jobs:
 
           rm -rf "$SOURCE_DIR"
 
+          GIT_SSH_COMMAND="ssh \
+            -i $HOME/.ssh/forgejo_deploy_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes" \
           git clone \
             --depth 1 \
             "$FORGEJO_REPOSITORY" \
@@ -293,7 +277,6 @@ jobs:
           set -euo pipefail
 
           dotnet tool install --global kuiperzone.pupnet
-
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
 
           mkdir -p "$HOME/.local/bin"
@@ -307,7 +290,6 @@ jobs:
             "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
 
           chmod +x "$HOME/.local/bin/appimagetool"
-
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
 
@@ -357,7 +339,6 @@ jobs:
             exit 1
           fi
 
-          echo "Artifact:"
           ls -lh "${files[0]}"
 
       - name: Upload artifact
