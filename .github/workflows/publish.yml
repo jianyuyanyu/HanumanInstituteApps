@@ -7,17 +7,18 @@ on:
         description: Application
         type: choice
         required: true
+        default: All
         options:
           - All
           - Player432Hz
           - Converter432Hz
           - PowerliminalsPlayer
           - YangDownloader
-
       platform:
         description: Platform
         type: choice
         required: true
+        default: All
         options:
           - All
           - win-x64
@@ -30,98 +31,89 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.getver.outputs.version }}
+      version: ${{ steps.meta.outputs.version }}
+      matrix: ${{ steps.meta.outputs.matrix }}
     steps:
-      - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.FORGEJO_SSH_KEY }}
+      - uses: actions/checkout@v4
 
-      - name: Checkout from Forgejo
-        run: git clone --depth 1 git@git.hanumaninstitute.com:hanuman/HanumanInstituteApps.git .
-
-      - name: Get version
-        id: getver
+      - name: Resolve version and matrix
+        id: meta
+        env:
+          APP: ${{ inputs.app }}
+          PLATFORM: ${{ inputs.platform }}
         run: |
-          VERSION=$(grep -oP '(?<=<AssemblyVersion>)[^<]+' Src/Directory.Build.props | head -1)
-          if [ -z "$VERSION" ]; then
+          set -euo pipefail
+          version=$(sed -n 's/.*<AssemblyVersion>\([^<]*\)<\/AssemblyVersion>.*/\1/p' Src/Directory.Build.props | head -n 1)
+          if [ -z "$version" ]; then
             echo "Could not find AssemblyVersion"
             exit 1
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Detected version: $VERSION"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $version"
+
+          apps='["Player432Hz","Converter432Hz","PowerliminalsPlayer","YangDownloader"]'
+          platforms='["win-x64","win-x86","linux-x64","linux-arm64","macos-x64"]'
+          if [ "$APP" != All ]; then
+            apps=$(jq -cn --arg a "$APP" '[$a]')
+          fi
+          if [ "$PLATFORM" != All ]; then
+            platforms=$(jq -cn --arg p "$PLATFORM" '[$p]')
+          fi
+          matrix=$(jq -cn --argjson app "$apps" --argjson platform "$platforms" '{app:$app,platform:$platform}')
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   publish:
     needs: prepare
     strategy:
       fail-fast: false
-      matrix:
-        app:
-          - Player432Hz
-          - Converter432Hz
-          - PowerliminalsPlayer
-          - YangDownloader
-        platform:
-          - win-x64
-          - win-x86
-          - linux-x64
-          - linux-arm64
-          - macos-x64
-
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
     runs-on: ${{ startsWith(matrix.platform, 'win') && 'windows-latest' || startsWith(matrix.platform, 'linux') && 'ubuntu-latest' || 'macos-latest' }}
-
+    env:
+      PUBLISH_OUT: ${{ github.workspace }}/artifacts
     steps:
-      - name: Decide whether to run
-        id: decide
-        run: |
-          if [[ "${{ inputs.app }}" == "All" || "${{ inputs.app }}" == "${{ matrix.app }}" ]] && \
-             [[ "${{ inputs.platform }}" == "All" || "${{ inputs.platform }}" == "${{ matrix.platform }}" ]]; then
-            echo "run=true" >> $GITHUB_OUTPUT
-          else
-            echo "run=false" >> $GITHUB_OUTPUT
-          fi
-        shell: bash
-
-      - name: Setup SSH
-        if: steps.decide.outputs.run == 'true'
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.FORGEJO_SSH_KEY }}
-
-      - name: Checkout from Forgejo
-        if: steps.decide.outputs.run == 'true'
-        run: git clone --depth 1 git@git.hanumaninstitute.com:hanuman/HanumanInstituteApps.git .
+      - uses: actions/checkout@v4
 
       - uses: actions/setup-dotnet@v4
-        if: steps.decide.outputs.run == 'true'
         with:
           dotnet-version: 10.0.x
 
       - name: Install PupNet
-        if: steps.decide.outputs.run == 'true' && (startsWith(matrix.platform, 'linux') || startsWith(matrix.platform, 'win'))
+        if: startsWith(matrix.platform, 'linux')
         run: |
-          dotnet tool install -g PupNet
-          echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+          dotnet tool install -g kuiperzone.pupnet
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Install appimagetool
+        if: startsWith(matrix.platform, 'linux')
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL -o "$HOME/.local/bin/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x "$HOME/.local/bin/appimagetool"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
 
       - name: Publish
-        if: steps.decide.outputs.run == 'true'
+        shell: bash
         env:
-          SCRIPT: ${{ startsWith(matrix.platform, 'win') && 'publish-win' || startsWith(matrix.platform, 'linux') && 'publish-linux' || 'publish-macos' }}
           RID: ${{ matrix.platform == 'macos-x64' && 'osx-x64' || matrix.platform }}
         run: |
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cmd /c "Scripts\%SCRIPT%.bat ${{ matrix.app }} %RID%"
+          set -euo pipefail
+          if [[ "${{ matrix.platform }}" == win-* ]]; then
+            script=publish-win
+          elif [[ "${{ matrix.platform }}" == linux-* ]]; then
+            script=publish-linux
           else
-            chmod +x "Scripts/$SCRIPT"
-            ./"Scripts/$SCRIPT" "${{ matrix.app }}" "$RID"
+            script=publish-osx
           fi
+          chmod +x Publish/workflows/publish-linux Publish/workflows/publish-osx Publish/workflows/publish-win
+          "./Publish/workflows/$script" "${{ matrix.app }}" "$RID"
 
       - uses: actions/upload-artifact@v4
-        if: steps.decide.outputs.run == 'true'
         with:
           name: ${{ matrix.app }}-${{ matrix.platform }}
-          path: Publish/**
-          if-no-files-found: ignore
+          path: artifacts/*
+          if-no-files-found: error
 
   release:
     needs: [prepare, publish]
@@ -129,18 +121,19 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
 
-      - name: Create Draft Release
+      - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.prepare.outputs.version }}
           name: v${{ needs.prepare.outputs.version }}
           draft: true
-          files: artifacts/**/*
-          fail_on_unmatched_files: false
+          files: artifacts/*
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
