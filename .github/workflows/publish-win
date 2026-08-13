@@ -31,25 +31,27 @@ version=$(read_version "$app")
 proj=$(desktop_csproj "$app")
 
 publishPath="$repo_root/Src/App.$app/$app.Desktop/bin/Publish/$runtime"
+
 outDir=$(output_dir "$version")
 outFile="${app}-${version}_${arch}-Setup.exe"
 outPath="$outDir/$outFile"
 
-issFile="$repo_root/Src/App.$app/Deploy/$app.iss"
+template="$publish_dir/installer.iss"
+issFile="$RUNNER_TEMP/${app}-${runtime}.iss"
 
 echo "Runtime      = $runtime"
 echo "AppName      = $app"
 echo "Version      = $version"
 echo "Project      = $proj"
 echo "PublishPath  = $publishPath"
-echo "Installer    = $issFile"
+echo "Template     = $template"
 echo "Output       = $outPath"
 echo
 
-if [[ ! -f "$issFile" ]]; then
-  echo "Missing Inno Setup configuration: $issFile" >&2
+[[ -f "$template" ]] || {
+  echo "Missing shared Inno Setup template: $template" >&2
   exit 1
-fi
+}
 
 iscc=""
 
@@ -64,10 +66,10 @@ do
   fi
 done
 
-if [[ -z "$iscc" ]]; then
+[[ -n "$iscc" ]] || {
   echo "Inno Setup compiler (ISCC.exe) was not found." >&2
   exit 1
-fi
+}
 
 rm -rf -- "$publishPath"
 
@@ -84,26 +86,33 @@ find "$publishPath" \
   -name '*.xml' \
   -delete
 
-if [[ ! -f "$publishPath/$app.exe" ]]; then
+[[ -f "$publishPath/$app.exe" ]] || {
   echo "Published executable was not found: $publishPath/$app.exe" >&2
   exit 1
-fi
+}
 
 mkdir -p "$outDir"
 rm -f -- "$outPath"
 
-"$iscc" \
-  "/DAppName=$app" \
-  "/DAppVersion=$version" \
-  "/DPublishDir=$publishPath" \
-  "/DOutputDir=$outDir" \
-  "/DOutputFile=$outFile" \
-  "$issFile"
+replace_tokens \
+  "$template" \
+  "$issFile" \
+  "__APP_NAME__" "$app" \
+  "__APP_VERSION__" "$version" \
+  "__PUBLISH_DIR__" "$publishPath" \
+  "__OUTPUT_DIR__" "$outDir" \
+  "__OUTPUT_FILE__" "$outFile"
 
-if [[ ! -s "$outPath" ]]; then
+echo "Compiling Inno Setup installer:"
+echo "  $issFile"
+echo
+
+"$iscc" "$issFile"
+
+[[ -s "$outPath" ]] || {
   echo "Inno Setup package was not created: $outPath" >&2
   exit 1
-fi
+}
 
 echo
 echo "Created: $outPath"
