@@ -38,6 +38,7 @@ conf="$repo_root/Src/App.${app}/Deploy/pupnet.conf"
 echo "Runtime = $runtime"
 echo "AppName = $app"
 echo "Version = $version"
+echo "Source  = $repo_root"
 echo "Output  = $outPath"
 echo
 
@@ -70,5 +71,4 @@ rm -rf -- "$outDir"/Artifacts.AppImage.*
   exit 1
 }
 
-echo
 echo "Created: $outPath"
