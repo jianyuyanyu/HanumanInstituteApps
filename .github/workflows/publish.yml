@@ -68,7 +68,7 @@ jobs:
           set -euo pipefail
 
           if [[ -z "$FORGEJO_SSH_KEY" ]]; then
-            echo "::error::FORGEJO_SSH_KEY is empty or unavailable."
+            echo "::error::FORGEJO_SSH_KEY is empty."
             exit 1
           fi
 
@@ -78,13 +78,24 @@ jobs:
           printf '%s\n' "$FORGEJO_SSH_KEY" > "$HOME/.ssh/forgejo_deploy_key"
           chmod 600 "$HOME/.ssh/forgejo_deploy_key"
 
+          echo "Key file:"
+          ls -l "$HOME/.ssh/forgejo_deploy_key"
+
+          echo "Key fingerprint:"
+          ssh-keygen -lf "$HOME/.ssh/forgejo_deploy_key"
+
+          echo "Validating private key:"
+          ssh-keygen -y \
+            -f "$HOME/.ssh/forgejo_deploy_key" \
+            > "$HOME/.ssh/forgejo_deploy_key.pub"
+
+          echo "Derived public-key fingerprint:"
+          ssh-keygen -lf "$HOME/.ssh/forgejo_deploy_key.pub"
+
           ssh-keyscan -H git.hanumaninstitute.com \
             >> "$HOME/.ssh/known_hosts"
 
           chmod 644 "$HOME/.ssh/known_hosts"
-
-          echo "Forgejo key fingerprint:"
-          ssh-keygen -lf "$HOME/.ssh/forgejo_deploy_key"
 
       - name: Test Forgejo SSH authentication
         shell: bash
@@ -92,8 +103,10 @@ jobs:
           set -euo pipefail
 
           ssh \
+            -vv \
             -i "$HOME/.ssh/forgejo_deploy_key" \
             -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
             -T \
             git@git.hanumaninstitute.com || true
@@ -106,8 +119,10 @@ jobs:
           GIT_SSH_COMMAND="ssh \
             -i $HOME/.ssh/forgejo_deploy_key \
             -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
             -o StrictHostKeyChecking=yes" \
-          git ls-remote "$FORGEJO_REPOSITORY"
+          git ls-remote \
+            "$FORGEJO_REPOSITORY"
 
       - name: Checkout Forgejo source
         shell: bash
@@ -119,6 +134,7 @@ jobs:
           GIT_SSH_COMMAND="ssh \
             -i $HOME/.ssh/forgejo_deploy_key \
             -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
             -o StrictHostKeyChecking=yes" \
           git clone \
             --depth 1 \
@@ -201,6 +217,9 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
+          echo "Version: $version"
+          echo "Matrix: $matrix"
+
   publish:
     needs: prepare
 
@@ -225,7 +244,7 @@ jobs:
           set -euo pipefail
 
           if [[ -z "$FORGEJO_SSH_KEY" ]]; then
-            echo "::error::FORGEJO_SSH_KEY is empty or unavailable."
+            echo "::error::FORGEJO_SSH_KEY is empty."
             exit 1
           fi
 
@@ -235,13 +254,35 @@ jobs:
           printf '%s\n' "$FORGEJO_SSH_KEY" > "$HOME/.ssh/forgejo_deploy_key"
           chmod 600 "$HOME/.ssh/forgejo_deploy_key"
 
+          echo "Key fingerprint:"
+          ssh-keygen -lf "$HOME/.ssh/forgejo_deploy_key"
+
+          echo "Validating private key:"
+          ssh-keygen -y \
+            -f "$HOME/.ssh/forgejo_deploy_key" \
+            > "$HOME/.ssh/forgejo_deploy_key.pub"
+
+          echo "Derived public-key fingerprint:"
+          ssh-keygen -lf "$HOME/.ssh/forgejo_deploy_key.pub"
+
           ssh-keyscan -H git.hanumaninstitute.com \
             >> "$HOME/.ssh/known_hosts"
 
           chmod 644 "$HOME/.ssh/known_hosts"
 
-          echo "Forgejo key fingerprint:"
-          ssh-keygen -lf "$HOME/.ssh/forgejo_deploy_key"
+      - name: Test Forgejo SSH authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -vv \
+            -i "$HOME/.ssh/forgejo_deploy_key" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -T \
+            git@git.hanumaninstitute.com || true
 
       - name: Checkout Forgejo source
         shell: bash
@@ -253,6 +294,7 @@ jobs:
           GIT_SSH_COMMAND="ssh \
             -i $HOME/.ssh/forgejo_deploy_key \
             -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
             -o StrictHostKeyChecking=yes" \
           git clone \
             --depth 1 \
@@ -277,6 +319,7 @@ jobs:
           set -euo pipefail
 
           dotnet tool install --global kuiperzone.pupnet
+
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
 
           mkdir -p "$HOME/.local/bin"
@@ -290,6 +333,7 @@ jobs:
             "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
 
           chmod +x "$HOME/.local/bin/appimagetool"
+
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
 
@@ -339,6 +383,7 @@ jobs:
             exit 1
           fi
 
+          echo "Artifact:"
           ls -lh "${files[0]}"
 
       - name: Upload artifact
