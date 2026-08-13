@@ -41,7 +41,7 @@ concurrency:
 
 env:
   DOTNET_VERSION: 10.0.x
-  FORGEJO_REPOSITORY: git@forgejo.hanumaninstitute.com:hanuman/HanumanInstituteApps.git
+  FORGEJO_REPOSITORY: git@git.hanumaninstitute.com:hanuman/HanumanInstituteApps.git
   SOURCE_DIR: ${{ github.workspace }}/source
   PUBLISH_OUT: ${{ github.workspace }}/artifacts
 
