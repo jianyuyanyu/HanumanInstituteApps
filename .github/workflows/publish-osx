@@ -51,13 +51,13 @@ outDir=$(output_dir "$version")
 outFile="${app}-${version}_${arch}.zip"
 outPath="$outDir/$outFile"
 
-echo "Runtime      = $runtime"
-echo "AppName      = $app"
-echo "Product      = $product"
-echo "Category     = $category"
-echo "Version      = $version"
-echo "Bundle       = $osxApp"
-echo "Output       = $outPath"
+echo "Runtime = $runtime"
+echo "AppName = $app"
+echo "Product = $product"
+echo "Category = $category"
+echo "Version = $version"
+echo "Source = $repo_root"
+echo "Output = $outPath"
 echo
 
 rm -rf -- "$bundlePath"
@@ -121,8 +121,6 @@ mv -- "$plist.tmp" "$plist"
 mkdir -p "$outDir"
 rm -f -- "$outPath"
 
-echo "Creating macOS ZIP: $outPath"
-
 (
   cd "$bundlePath"
   zip -6 -r "$outPath" ./*
@@ -133,5 +131,4 @@ echo "Creating macOS ZIP: $outPath"
   exit 1
 }
 
-echo
 echo "Created: $outPath"
