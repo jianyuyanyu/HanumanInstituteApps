@@ -28,7 +28,7 @@ jobs:
 
           chmod 600 "$HOME/.ssh/forgejo_deploy_key"
 
-          echo "Private key type:"
+          echo "Private key fingerprint:"
           ssh-keygen -lf "$HOME/.ssh/forgejo_deploy_key"
 
           echo "Deriving public key..."
@@ -44,7 +44,7 @@ jobs:
           echo "Public key:"
           cat "$HOME/.ssh/forgejo_deploy_key.pub"
 
-          echo "Scanning Forgejo host key..."
+          echo "Adding Forgejo host key..."
 
           ssh-keyscan \
             -H \
@@ -64,18 +64,24 @@ jobs:
             -o IdentitiesOnly=yes \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
+            -T \
             git@git.hanumaninstitute.com \
             2>&1 | tee "$RUNNER_TEMP/forgejo-ssh.log"
 
-      - name: Test Forgejo repository
+      - name: Test exact Forgejo repository
         shell: bash
         run: |
           set -euo pipefail
 
-          GIT_SSH_COMMAND="ssh \
+          export GIT_SSH_COMMAND="ssh \
             -i $HOME/.ssh/forgejo_deploy_key \
             -o IdentitiesOnly=yes \
             -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes" \
+            -o StrictHostKeyChecking=yes"
+
+          echo "Testing:"
+          echo "git@git.hanumaninstitute.com:hanuman/HanumanInstituteApps.git"
+          echo
+
           git ls-remote \
             git@git.hanumaninstitute.com:hanuman/HanumanInstituteApps.git
